@@ -25,6 +25,26 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Settings add/edit forms behave like centered, scrollable modals instead of clipped dropdowns. */
+main:has(.settings-modal-root) details[open]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(15 23 42 / 0.42);
+}
+
+main:has(.settings-modal-root) details[open] > form {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 50;
+  width: min(92vw, 30rem);
+  max-height: 88vh;
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+}
+
 /* Keep the fullscreen control visible while freeing the title area for the number grid. */
 :fullscreen .app-title-block {
   display: none;
