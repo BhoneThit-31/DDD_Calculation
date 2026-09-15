@@ -46,6 +46,12 @@ function parseLines(rawInput: string) {
   return rawInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(parseRuleLine);
 }
 
+function expandedItems(rawInput: string) {
+  const parsed = parseLines(rawInput);
+  if (parsed.some((item) => !item) || parsed.length === 0) return null;
+  return parsed.filter((item): item is { numbers: string[]; amount: number; ruleType: string } => Boolean(item)).flatMap((item) => item.numbers.map((number) => ({ number, amount: item.amount, ruleType: item.ruleType })));
+}
+
 export async function saveSales(_previous: SaveSalesState, formData: FormData): Promise<SaveSalesState> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -54,9 +60,8 @@ export async function saveSales(_previous: SaveSalesState, formData: FormData): 
   const drawPeriodId = String(formData.get("draw_period_id") || "");
   const rawInput = String(formData.get("raw_input") || "").trim();
   if (!commissionId || !drawPeriodId || !rawInput) return { error: "ကော်မရှင်၊ အကြိမ်နဲ့ အရောင်းစာရင်း ဖြည့်ပါ။" };
-  const parsed = parseLines(rawInput);
-  if (parsed.some((item) => !item) || parsed.length === 0) return { error: "တစ်ကြောင်းစီ `ဂဏန်း ပမာဏ` ပုံစံရေးပါ။ ဥပမာ - 123 100" };
-  const items = parsed.filter((item): item is { numbers: string[]; amount: number; ruleType: string } => Boolean(item)).flatMap((item) => item.numbers.map((number) => ({ number, amount: item.amount, ruleType: item.ruleType })));
+  const items = expandedItems(rawInput);
+  if (!items) return { error: "တစ်ကြောင်းစီ `ဂဏန်း ပမာဏ` ပုံစံရေးပါ။ ဥပမာ - 123 100" };
 
   const { data: ownedDealer } = await supabase.from("dealers").select("id").eq("owner_user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   let dealerId = ownedDealer?.id;
@@ -78,15 +83,41 @@ export async function saveSales(_previous: SaveSalesState, formData: FormData): 
   return { success: `#${receiptNumber} စာရင်းသိမ်းပြီးပါပြီ။` };
 }
 
+export async function updateSale(_previous: SaveSalesState, formData: FormData): Promise<SaveSalesState> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const saleId = String(formData.get("sale_id") || "");
+  const rawInput = String(formData.get("raw_input") || "").trim();
+  const reason = String(formData.get("reason") || "").trim();
+  if (!user || !saleId) return { error: "စာရင်းမတွေ့ပါ။" };
+  if (!reason) return { error: "ပြင်ဆင်ရတဲ့အကြောင်းပြချက် ထည့်ပါ။" };
+  const items = expandedItems(rawInput);
+  if (!items) return { error: "တစ်ကြောင်းစီ `ဂဏန်း ပမာဏ` ပုံစံရေးပါ။" };
+  const { data: oldSale } = await supabase.from("sales_entries").select("id, dealer_id, commission_id, draw_period_id, raw_input, total_amount, status").eq("id", saleId).maybeSingle();
+  if (!oldSale || oldSale.status === "deleted") return { error: "ဒီစာရင်းကို ပြင်လို့မရပါ။" };
+  const { data: oldItems } = await supabase.from("sales_items").select("number, rule_type, amount, source_text").eq("sales_entry_id", saleId);
+  const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+  const { error: updateError } = await supabase.from("sales_entries").update({ raw_input: rawInput, total_amount: totalAmount, updated_by: user.id }).eq("id", saleId);
+  if (updateError) return { error: updateError.message };
+  await supabase.from("sales_items").delete().eq("sales_entry_id", saleId);
+  const { error: itemError } = await supabase.from("sales_items").insert(items.map((item) => ({ sales_entry_id: saleId, number: item.number, rule_type: item.ruleType, amount: item.amount, source_text: rawInput })));
+  if (itemError) return { error: itemError.message };
+  await supabase.from("audit_logs").insert({ dealer_id: oldSale.dealer_id, entity_type: "sales_entry", entity_id: saleId, action: "update", old_data: { ...oldSale, items: oldItems || [] }, new_data: { ...oldSale, raw_input: rawInput, total_amount: totalAmount, items }, reason, created_by: user.id });
+  revalidatePath("/");
+  return { success: "စာရင်းပြင်ပြီးပါပြီ။" };
+}
+
 export async function deleteSale(formData: FormData) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const saleId = String(formData.get("sale_id") || "");
+  const reason = String(formData.get("reason") || "").trim();
   if (!user || !saleId) return;
+  if (!reason) return;
   const { data: sale } = await supabase.from("sales_entries").select("id, dealer_id, status, raw_input, total_amount").eq("id", saleId).maybeSingle();
   if (!sale || sale.status === "deleted") return;
   const { error } = await supabase.from("sales_entries").update({ status: "deleted", deleted_at: new Date().toISOString(), deleted_by: user.id, updated_by: user.id }).eq("id", saleId);
   if (error) return;
-  await supabase.from("audit_logs").insert({ dealer_id: sale.dealer_id, entity_type: "sales_entry", entity_id: sale.id, action: "delete", old_data: sale, new_data: { ...sale, status: "deleted" }, reason: "Sales entry soft deleted", created_by: user.id });
+  await supabase.from("audit_logs").insert({ dealer_id: sale.dealer_id, entity_type: "sales_entry", entity_id: sale.id, action: "delete", old_data: sale, new_data: { ...sale, status: "deleted" }, reason, created_by: user.id });
   revalidatePath("/");
 }
