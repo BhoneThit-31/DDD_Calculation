@@ -44,3 +44,17 @@ export async function createDrawPeriod(_previous: SetupState, formData: FormData
   revalidatePath("/");
   return { success: "အကြိမ် ထည့်ပြီးပါပြီ။" };
 }
+
+export async function saveWinningResult(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, user, dealerId } = await getDealerId();
+  const periodId = String(formData.get("draw_period_id") || "");
+  const winningNumber = String(formData.get("winning_number") || "").replace(/[^0-9]/g, "").padStart(3, "0");
+  if (!user || !dealerId || !periodId) return { error: "ဒိုင် workspace သို့မဟုတ် အကြိမ် မတွေ့ပါ။" };
+  if (!/^\d{3}$/.test(winningNumber)) return { error: "ပေါက်ဂဏန်းကို ၃ လုံးဖြည့်ပါ။" };
+  const { data: period } = await supabase.from("draw_periods").select("id, status").eq("id", periodId).eq("dealer_id", dealerId).maybeSingle();
+  if (!period) return { error: "ရွေးထားတဲ့ အကြိမ် မတွေ့ပါ။" };
+  const { error } = await supabase.from("winning_results").upsert({ draw_period_id: periodId, winning_number: winningNumber, created_by: user.id, updated_by: user.id, updated_at: new Date().toISOString() }, { onConflict: "draw_period_id" });
+  if (error) return { error: error.message };
+  revalidatePath("/");
+  return { success: `ပေါက်ဂဏန်း ${winningNumber} သိမ်းပြီးပါပြီ။` };
+}
