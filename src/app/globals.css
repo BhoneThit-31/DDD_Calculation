@@ -24,3 +24,36 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Keep the fullscreen control visible while freeing the title area for the number grid. */
+:fullscreen .app-title-block {
+  display: none;
+}
+
+:fullscreen .app-header {
+  position: relative;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+:fullscreen .display-mode-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 50;
+}
+
+:fullscreen .number-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+:fullscreen .number-grid button {
+  min-height: 2rem;
+  padding: 0.3rem 0.45rem;
+}
+
+:fullscreen .number-grid button > span {
+  font-size: 0.7rem;
+}

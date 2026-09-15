@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import SalesEntry from "@/app/sales-entry";
 import Setup from "@/app/setup";
+import DisplayModeToggle from "@/app/display-mode-toggle";
 
 type SearchParams = { page?: string; search?: string; from?: string; to?: string; commission?: string; period?: string; status?: string; sort?: string; dir?: string };
 const pageSize = 10;
@@ -54,5 +55,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const salesWithItems = (sales || []).map((sale) => ({ ...sale, items: itemsByEntry[sale.id] || [] }));
   const filterValues = { search: params.search || "", from: params.from || "", to: params.to || "", commission: selectedCommission || "", period: selectedPeriod || "", status, sort, dir: ascending ? "asc" : "desc" };
   const queryValues = Object.fromEntries(Object.entries(filterValues).filter(([, value]) => value)) as Record<string, string>;
-  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
+  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="app-header mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div className="app-title-block"><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div><DisplayModeToggle /></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
 }
