@@ -15,6 +15,25 @@ export default function LoginPage() {
     setLoading(true);
 
     const supabase = createClient();
+
+    // Admin-created accounts may use email/password while the normal UI
+    // still accepts the dealer's phone number or username.
+    if (identifier.includes("@")) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: identifier.trim(),
+        password,
+      });
+
+      if (signInError) {
+        setError("စကားဝှက် သို့မဟုတ် အီးမေးလ် မှားနေပါသည်။");
+        setLoading(false);
+        return;
+      }
+
+      window.location.assign("/");
+      return;
+    }
+
     const { data: phoneData, error: lookupError } = await supabase.rpc(
       "resolve_login_phone",
       { identifier },
