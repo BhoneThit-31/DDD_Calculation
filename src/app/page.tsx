@@ -4,6 +4,7 @@ import SalesEntry from "@/app/sales-entry";
 import Setup from "@/app/setup";
 import DisplayModeToggle from "@/app/display-mode-toggle";
 import WinningResult from "@/app/winning-result";
+import FinanceSummary from "@/app/finance-summary";
 
 type SearchParams = { page?: string; search?: string; from?: string; to?: string; commission?: string; period?: string; status?: string; sort?: string; dir?: string };
 const pageSize = 10;
@@ -18,7 +19,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   if (!dealerId) return <main className="min-h-screen bg-slate-100 p-6"><section className="mx-auto max-w-3xl rounded-xl border border-amber-200 bg-amber-50 p-6 text-amber-900"><h1 className="font-bold">ဒိုင် workspace မရှိသေးပါ</h1><p className="mt-2 text-sm">ဒီ account ကို dealer တစ်ခုနဲ့ ချိတ်ပြီးမှ အရောင်းစာရင်းထည့်နိုင်ပါမယ်။</p></section></main>;
   const params = await searchParams;
   const [{ data: commissions }, { data: allPeriods }] = await Promise.all([
-    supabase.from("commissions").select("id, name, default_payout_rate").eq("dealer_id", dealerId).eq("status", "active").order("created_at"),
+    supabase.from("commissions").select("id, name, default_payout_rate, commission_percent").eq("dealer_id", dealerId).eq("status", "active").order("created_at"),
     supabase.from("draw_periods").select("id, name, status").eq("dealer_id", dealerId).order("start_date", { ascending: false }),
   ]);
   const openPeriods = (allPeriods || []).filter((period) => period.status === "open");
@@ -61,6 +62,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   }
   const payoutRate = Number(selectedCommissionRow?.default_payout_rate || 0);
   const winningPayout = winningStake * payoutRate;
+  const commissionPercent = Number(selectedCommissionRow?.commission_percent || 0);
+  const commissionAmount = summaryTotal * commissionPercent / 100;
+  const profit = summaryTotal - commissionAmount - winningPayout;
   const { data: sales, count } = await query.order(orderColumn, { ascending }).range((requestedPage - 1) * pageSize, requestedPage * pageSize - 1);
   const totalPages = Math.max(1, Math.ceil((count || 0) / pageSize));
   const currentPage = Math.min(requestedPage, totalPages);
@@ -73,5 +77,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const salesWithItems = (sales || []).map((sale) => ({ ...sale, items: itemsByEntry[sale.id] || [] }));
   const filterValues = { search: params.search || "", from: params.from || "", to: params.to || "", commission: selectedCommission || "", period: selectedPeriod || "", status, sort, dir: ascending ? "asc" : "desc" };
   const queryValues = Object.fromEntries(Object.entries(filterValues).filter(([, value]) => value)) as Record<string, string>;
-  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="app-header mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div className="app-title-block"><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div><DisplayModeToggle /></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} winningNumber={winningResult?.winning_number} winningStake={winningStake} winningPayout={winningPayout} payoutRate={payoutRate} winningDetails={winningDetails} winningPeriodId={selectedPeriod} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
+  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="app-header mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div className="app-title-block"><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div><DisplayModeToggle /></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} commissionAmount={commissionAmount} commissionPercent={commissionPercent} profit={profit} winningNumber={winningResult?.winning_number} winningStake={winningStake} winningPayout={winningPayout} payoutRate={payoutRate} winningDetails={winningDetails} winningPeriodId={selectedPeriod} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
 }

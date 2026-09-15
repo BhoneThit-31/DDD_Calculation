@@ -30,6 +30,32 @@ export async function createCommission(_previous: SetupState, formData: FormData
   return { success: "ကော်မရှင်လူ ထည့်ပြီးပါပြီ။" };
 }
 
+export async function updateCommission(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, dealerId } = await getDealerId();
+  const id = String(formData.get("id") || "");
+  const name = String(formData.get("name") || "").trim();
+  const phone = String(formData.get("phone") || "").trim();
+  const commissionPercent = Number(formData.get("commission_percent") || 0);
+  const payoutRate = Number(formData.get("default_payout_rate") || 80);
+  if (!dealerId || !id || !name) return { error: "ကော်မရှင်လူအချက်အလက် မပြည့်စုံပါ။" };
+  if (commissionPercent < 0 || commissionPercent > 100 || payoutRate < 0) return { error: "နှုန်းထားကို မှန်ကန်စွာ ထည့်ပါ။" };
+  const { error } = await supabase.from("commissions").update({ name, phone: phone || null, commission_percent: commissionPercent, default_payout_rate: payoutRate, updated_at: new Date().toISOString() }).eq("id", id).eq("dealer_id", dealerId);
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: "ကော်မရှင်လူ ပြင်ပြီးပါပြီ။" };
+}
+
+export async function toggleCommission(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, dealerId } = await getDealerId();
+  const id = String(formData.get("id") || "");
+  const status = String(formData.get("status") || "inactive") === "active" ? "active" : "inactive";
+  if (!dealerId || !id) return { error: "ကော်မရှင်လူ မတွေ့ပါ။" };
+  const { error } = await supabase.from("commissions").update({ status, updated_at: new Date().toISOString() }).eq("id", id).eq("dealer_id", dealerId);
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: status === "active" ? "ပြန်ဖွင့်ပြီးပါပြီ။" : "အလုပ်မလုပ်အောင် ပိတ်ပြီးပါပြီ။" };
+}
+
 export async function createDrawPeriod(_previous: SetupState, formData: FormData): Promise<SetupState> {
   const { supabase, dealerId } = await getDealerId();
   const name = String(formData.get("name") || "").trim();
@@ -43,6 +69,58 @@ export async function createDrawPeriod(_previous: SetupState, formData: FormData
   if (error) return { error: error.message };
   revalidatePath("/");
   return { success: "အကြိမ် ထည့်ပြီးပါပြီ။" };
+}
+
+export async function setDrawPeriodStatus(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, user, dealerId } = await getDealerId();
+  const id = String(formData.get("id") || "");
+  const status = String(formData.get("status") || "open");
+  if (!user || !dealerId || !id || !["open", "closed"].includes(status)) return { error: "အကြိမ်အချက်အလက် မမှန်ပါ။" };
+  const { data: period } = await supabase.from("draw_periods").select("id, status").eq("id", id).eq("dealer_id", dealerId).maybeSingle();
+  if (!period) return { error: "အကြိမ် မတွေ့ပါ။" };
+  const { error } = await supabase.from("draw_periods").update({ status, locked_at: status === "closed" ? new Date().toISOString() : null, locked_by: status === "closed" ? user.id : null, updated_at: new Date().toISOString() }).eq("id", id).eq("dealer_id", dealerId);
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: status === "closed" ? "အကြိမ်ပိတ်ပြီးပါပြီ။" : "အကြိမ်ပြန်ဖွင့်ပြီးပါပြီ။" };
+}
+
+export async function saveCommissionLimit(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, dealerId } = await getDealerId();
+  const periodId = String(formData.get("draw_period_id") || "");
+  const maxAmount = Number(formData.get("max_amount") || 0);
+  const warningPercent = Number(formData.get("warning_percent") || 80);
+  if (!dealerId || !periodId || maxAmount < 0 || warningPercent < 0 || warningPercent > 100) return { error: "Global limit အချက်အလက် မမှန်ပါ။" };
+  const { error } = await supabase.from("dealer_limits").upsert({ dealer_id: dealerId, draw_period_id: periodId, limit_type: "all_number", number: null, max_amount: maxAmount, warning_percent: warningPercent, updated_at: new Date().toISOString() }, { onConflict: "dealer_id,draw_period_id,limit_type,number" });
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: "စုစုပေါင်း limit သိမ်းပြီးပါပြီ။" };
+}
+
+export async function saveNumberLimit(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, dealerId } = await getDealerId();
+  const periodId = String(formData.get("draw_period_id") || "");
+  const number = String(formData.get("number") || "").replace(/[^0-9]/g, "").padStart(3, "0");
+  const maxAmount = Number(formData.get("max_amount") || 0);
+  const warningPercent = Number(formData.get("warning_percent") || 80);
+  if (!dealerId || !periodId || !/^\d{3}$/.test(number) || maxAmount < 0 || warningPercent < 0 || warningPercent > 100) return { error: "Global ဂဏန်း limit အချက်အလက် မမှန်ပါ။" };
+  const { error } = await supabase.from("dealer_limits").upsert({ dealer_id: dealerId, draw_period_id: periodId, limit_type: "number", number, max_amount: maxAmount, warning_percent: warningPercent, updated_at: new Date().toISOString() }, { onConflict: "dealer_id,draw_period_id,limit_type,number" });
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: `${number} limit သိမ်းပြီးပါပြီ။` };
+}
+
+export async function saveCommissionNumberLimit(_previous: SetupState, formData: FormData): Promise<SetupState> {
+  const { supabase, dealerId } = await getDealerId();
+  const commissionId = String(formData.get("commission_id") || "");
+  const periodId = String(formData.get("draw_period_id") || "");
+  const number = String(formData.get("number") || "").replace(/[^0-9]/g, "").padStart(3, "0");
+  const maxAmount = Number(formData.get("max_amount") || 0);
+  const warningPercent = Number(formData.get("warning_percent") || 100);
+  if (!dealerId || !commissionId || !periodId || !/^\d{3}$/.test(number) || maxAmount < 0 || warningPercent < 0 || warningPercent > 100) return { error: "Commission number limit အချက်အလက် မမှန်ပါ။" };
+  const { error } = await supabase.from("commission_number_limits").upsert({ dealer_id: dealerId, commission_id: commissionId, draw_period_id: periodId, number, max_amount: maxAmount, warning_percent: warningPercent, updated_at: new Date().toISOString() }, { onConflict: "commission_id,draw_period_id,number" });
+  if (error) return { error: error.message };
+  revalidatePath("/settings"); revalidatePath("/");
+  return { success: `${number} commission limit သိမ်းပြီးပါပြီ။` };
 }
 
 export async function saveWinningResult(_previous: SetupState, formData: FormData): Promise<SetupState> {

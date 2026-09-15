@@ -52,6 +52,37 @@ function expandedItems(rawInput: string) {
   return parsed.filter((item): item is { numbers: string[]; amount: number; ruleType: string } => Boolean(item)).flatMap((item) => item.numbers.map((number) => ({ number, amount: item.amount, ruleType: item.ruleType })));
 }
 
+async function checkLimits(supabase: Awaited<ReturnType<typeof createClient>>, dealerId: string, commissionId: string, periodId: string, items: { number: string; amount: number }[], totalAmount: number, excludeSaleId?: string) {
+  const [{ data: overall }, { data: perNumber }, { data: commissionNumbers }] = await Promise.all([
+    supabase.from("dealer_limits").select("max_amount, warning_percent").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("limit_type", "all_number").is("number", null).limit(1).maybeSingle(),
+    supabase.from("dealer_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("limit_type", "number"),
+    supabase.from("commission_number_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId),
+  ]);
+  if (overall) {
+    let query = supabase.from("sales_entries").select("total_amount").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
+    if (excludeSaleId) query = query.neq("id", excludeSaleId);
+    const { data } = await query;
+    const current = (data || []).reduce((sum, row) => sum + Number(row.total_amount), 0);
+    if (current + totalAmount > Number(overall.max_amount)) return `စုစုပေါင်း limit ${Number(overall.max_amount).toLocaleString()} ကျော်သွားပါမယ်။`;
+  }
+  const limitedNumbers = [...(perNumber || []), ...(commissionNumbers || []).map((limit) => ({ ...limit, commissionSpecific: true }))].filter((limit) => items.some((item) => item.number === limit.number));
+  if (limitedNumbers.length) {
+    const { data: entries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("status", "active");
+    const entryIds = (entries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
+    const { data: currentItems } = entryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", entryIds) : { data: [] };
+    const { data: commissionEntries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
+    const commissionEntryIds = (commissionEntries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
+    const { data: commissionItems } = commissionEntryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", commissionEntryIds) : { data: [] };
+    for (const limit of limitedNumbers) {
+      const scopedItems = (limit as { commissionSpecific?: boolean }).commissionSpecific ? (commissionItems || []).filter((item) => item.number === limit.number) : (currentItems || []).filter((item) => item.number === limit.number);
+      const current = scopedItems.reduce((sum, item) => sum + Number(item.amount), 0);
+      const added = items.filter((item) => item.number === limit.number).reduce((sum, item) => sum + Number(item.amount), 0);
+      if (current + added > Number(limit.max_amount)) return `${limit.number} limit ${Number(limit.max_amount).toLocaleString()} ကျော်သွားပါမယ်။`;
+    }
+  }
+  return null;
+}
+
 export async function saveSales(_previous: SaveSalesState, formData: FormData): Promise<SaveSalesState> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -75,12 +106,13 @@ export async function saveSales(_previous: SaveSalesState, formData: FormData): 
   const { data: lastEntry } = await supabase.from("sales_entries").select("receipt_number").eq("dealer_id", dealerId).order("receipt_number", { ascending: false }).limit(1).maybeSingle();
   const receiptNumber = (lastEntry?.receipt_number ?? 0) + 1;
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+  const limitWarning = await checkLimits(supabase, dealerId, commissionId, drawPeriodId, items, totalAmount);
   const { data: entry, error: entryError } = await supabase.from("sales_entries").insert({ dealer_id: dealerId, commission_id: commissionId, draw_period_id: drawPeriodId, receipt_number: receiptNumber, raw_input: rawInput, total_amount: totalAmount, created_by: user.id }).select("id").single();
   if (entryError || !entry) return { error: entryError?.message || "စာရင်းသိမ်းမရပါ။" };
   const { error: itemError } = await supabase.from("sales_items").insert(items.map((item) => ({ sales_entry_id: entry.id, number: item.number, rule_type: item.ruleType, amount: item.amount, source_text: rawInput })));
   if (itemError) return { error: itemError.message };
   revalidatePath("/");
-  return { success: `#${receiptNumber} စာရင်းသိမ်းပြီးပါပြီ။` };
+  return { success: `#${receiptNumber} စာရင်းသိမ်းပြီးပါပြီ။`, error: limitWarning ? `⚠️ ${limitWarning}` : undefined };
 }
 
 export async function updateSale(_previous: SaveSalesState, formData: FormData): Promise<SaveSalesState> {
@@ -97,6 +129,9 @@ export async function updateSale(_previous: SaveSalesState, formData: FormData):
   if (!oldSale || oldSale.status === "deleted") return { error: "ဒီစာရင်းကို ပြင်လို့မရပါ။" };
   const { data: oldItems } = await supabase.from("sales_items").select("number, rule_type, amount, source_text").eq("sales_entry_id", saleId);
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+  const { data: period } = await supabase.from("draw_periods").select("status").eq("id", oldSale.draw_period_id).eq("dealer_id", oldSale.dealer_id).maybeSingle();
+  if (!period || period.status !== "open") return { error: "ပိတ်ပြီးသားအကြိမ်ထဲက စာရင်းကို ပြင်လို့မရပါ။" };
+  const limitWarning = await checkLimits(supabase, oldSale.dealer_id, oldSale.commission_id, oldSale.draw_period_id, items, totalAmount, saleId);
   const { error: updateError } = await supabase.from("sales_entries").update({ raw_input: rawInput, total_amount: totalAmount, updated_by: user.id }).eq("id", saleId);
   if (updateError) return { error: updateError.message };
   await supabase.from("sales_items").delete().eq("sales_entry_id", saleId);
@@ -104,7 +139,7 @@ export async function updateSale(_previous: SaveSalesState, formData: FormData):
   if (itemError) return { error: itemError.message };
   await supabase.from("audit_logs").insert({ dealer_id: oldSale.dealer_id, entity_type: "sales_entry", entity_id: saleId, action: "update", old_data: { ...oldSale, items: oldItems || [] }, new_data: { ...oldSale, raw_input: rawInput, total_amount: totalAmount, items }, reason, created_by: user.id });
   revalidatePath("/");
-  return { success: "စာရင်းပြင်ပြီးပါပြီ။" };
+  return { success: "စာရင်းပြင်ပြီးပါပြီ။", error: limitWarning ? `⚠️ ${limitWarning}` : undefined };
 }
 
 export async function deleteSale(formData: FormData) {
@@ -114,8 +149,10 @@ export async function deleteSale(formData: FormData) {
   const reason = String(formData.get("reason") || "").trim();
   if (!user || !saleId) return;
   if (!reason) return;
-  const { data: sale } = await supabase.from("sales_entries").select("id, dealer_id, status, raw_input, total_amount").eq("id", saleId).maybeSingle();
+  const { data: sale } = await supabase.from("sales_entries").select("id, dealer_id, commission_id, draw_period_id, status, raw_input, total_amount").eq("id", saleId).maybeSingle();
   if (!sale || sale.status === "deleted") return;
+  const { data: period } = await supabase.from("draw_periods").select("status").eq("id", sale.draw_period_id).eq("dealer_id", sale.dealer_id).maybeSingle();
+  if (!period || period.status !== "open") return;
   const { error } = await supabase.from("sales_entries").update({ status: "deleted", deleted_at: new Date().toISOString(), deleted_by: user.id, updated_by: user.id }).eq("id", saleId);
   if (error) return;
   await supabase.from("audit_logs").insert({ dealer_id: sale.dealer_id, entity_type: "sales_entry", entity_id: sale.id, action: "delete", old_data: sale, new_data: { ...sale, status: "deleted" }, reason, created_by: user.id });
