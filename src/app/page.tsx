@@ -49,12 +49,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const { data: winningResult } = selectedPeriod ? await supabase.from("winning_results").select("winning_number").eq("draw_period_id", selectedPeriod).maybeSingle() : { data: null };
   const selectedCommissionRow = (commissions || []).find((commission) => commission.id === selectedCommission);
   let winningStake = 0;
+  let winningDetails: { receiptNumber: number; amount: number }[] = [];
   if (selectedCommission && selectedPeriod && winningResult?.winning_number) {
-    const { data: winningSales } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("commission_id", selectedCommission).eq("draw_period_id", selectedPeriod).eq("status", "active");
+    const { data: winningSales } = await supabase.from("sales_entries").select("id, receipt_number").eq("dealer_id", dealerId).eq("commission_id", selectedCommission).eq("draw_period_id", selectedPeriod).eq("status", "active");
     const winningSaleIds = (winningSales || []).map((sale) => sale.id);
     if (winningSaleIds.length) {
-      const { data: winningItems } = await supabase.from("sales_items").select("amount").in("sales_entry_id", winningSaleIds).eq("number", winningResult.winning_number);
+      const { data: winningItems } = await supabase.from("sales_items").select("sales_entry_id, amount").in("sales_entry_id", winningSaleIds).eq("number", winningResult.winning_number);
       winningStake = (winningItems || []).reduce((sum, item) => sum + Number(item.amount), 0);
+      winningDetails = (winningItems || []).map((item) => ({ receiptNumber: (winningSales || []).find((sale) => sale.id === item.sales_entry_id)?.receipt_number || 0, amount: Number(item.amount) })).sort((a, b) => b.receiptNumber - a.receiptNumber);
     }
   }
   const payoutRate = Number(selectedCommissionRow?.default_payout_rate || 0);
@@ -71,5 +73,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   const salesWithItems = (sales || []).map((sale) => ({ ...sale, items: itemsByEntry[sale.id] || [] }));
   const filterValues = { search: params.search || "", from: params.from || "", to: params.to || "", commission: selectedCommission || "", period: selectedPeriod || "", status, sort, dir: ascending ? "asc" : "desc" };
   const queryValues = Object.fromEntries(Object.entries(filterValues).filter(([, value]) => value)) as Record<string, string>;
-  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="app-header mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div className="app-title-block"><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div><DisplayModeToggle /></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} winningNumber={winningResult?.winning_number} winningStake={winningStake} winningPayout={winningPayout} payoutRate={payoutRate} winningPeriodId={selectedPeriod} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
+  return <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-6"><section className="mx-auto max-w-7xl"><header className="app-header mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5"><div className="app-title-block"><p className="text-sm font-medium text-blue-700">DDD Calculation</p><h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">သုံးလုံး အရောင်း POS</h1><p className="mt-1 text-sm text-slate-500">{owned?.shop_name || "ဒိုင်အရောင်းစာရင်း စီမံခန့်ခွဲမှု"}</p></div><DisplayModeToggle /></header><Setup showCommission={!commissions?.length} showPeriod={!openPeriods.length} /><SalesEntry commissions={commissions || []} periods={openPeriods} sales={salesWithItems} numberTotals={numberTotals} summaryTotal={summaryTotal} winningNumber={winningResult?.winning_number} winningStake={winningStake} winningPayout={winningPayout} payoutRate={payoutRate} winningDetails={winningDetails} winningPeriodId={selectedPeriod} filterValues={filterValues} pagination={{ page: currentPage, totalPages, total: count || 0, pageSize }} query={queryValues} /></section></main>;
 }
