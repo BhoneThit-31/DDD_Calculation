@@ -7,6 +7,7 @@ import SalesFilters from "@/app/sales-filters";
 import Pagination from "@/app/pagination";
 import WinningResult from "@/app/winning-result";
 import FinanceSummary from "@/app/finance-summary";
+import { parseOptimisticSales, type OptimisticItem } from "@/lib/optimistic-sales";
 
 type Option = { id: string; name: string };
 type SaleItem = { number: string; amount: number; rule_type: string };
@@ -92,6 +93,7 @@ export default function SalesEntry({
   const [editState, editAction] = useActionState(updateSale, {});
   const [prefix, setPrefix] = useState(0);
   const [rawInput, setRawInput] = useState("");
+  const [optimisticItems, setOptimisticItems] = useState<OptimisticItem[] | null>(null);
   const [expandedSales, setExpandedSales] = useState<Set<string>>(new Set());
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Sale | null>(null);
@@ -104,6 +106,7 @@ export default function SalesEntry({
     { length: 100 },
     (_, index) => `${prefix}${String(index).padStart(2, "0")}`,
   );
+  const optimisticNumberTotal = (number: string) => (optimisticItems || []).filter((item) => item.number === number).reduce((sum, item) => sum + item.amount, 0);
   const limitStatus = (number: string) => {
     const commissionLimit = commissionNumberLimits.find((limit) => limit.number === number);
     const globalLimit = globalNumberLimits.find((limit) => limit.number === number);
@@ -156,6 +159,8 @@ export default function SalesEntry({
     setRawInput("");
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [state.success]);
+  useEffect(() => { if (state.success || state.error) setOptimisticItems(null); }, [state.success, state.error]);
+  const submitOptimistically = () => { const parsed = parseOptimisticSales(rawInput); if (!parsed) return; setOptimisticItems(parsed); setRawInput(""); };
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -165,10 +170,10 @@ export default function SalesEntry({
             <h2 className="text-xl font-bold">စာရင်းထည့်ရန်</h2>
           </div>
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
-            {pagination.total} စာရင်း
+            {pagination.total + (optimisticItems ? 1 : 0)} စာရင်း
           </span>
         </div>
-        <form ref={formRef} action={formAction} className="space-y-4">
+        <form ref={formRef} action={formAction} onSubmit={submitOptimistically} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm text-slate-600">
               ကော်မရှင်
@@ -378,12 +383,13 @@ export default function SalesEntry({
             {numbers.map((number) => {
               const status = limitStatus(number);
               const isWinner = number === winningNumber;
-              const color = status === "over" ? "bg-red-600 text-white hover:bg-red-700" : status === "warning" ? "bg-amber-100 text-amber-900 hover:bg-amber-200" : isWinner ? "bg-red-50 ring-2 ring-inset ring-red-500" : numberTotals[number] ? "bg-blue-50/60" : "bg-white";
-              const valueColor = status === "over" ? "text-white" : status === "warning" ? "text-amber-800" : isWinner ? "text-red-700" : numberTotals[number] ? "text-blue-700" : "text-slate-400";
+              const displayedTotal = (numberTotals[number] || 0) + optimisticNumberTotal(number);
+              const color = status === "over" ? "bg-red-600 text-white hover:bg-red-700" : status === "warning" ? "bg-amber-100 text-amber-900 hover:bg-amber-200" : isWinner ? "bg-red-50 ring-2 ring-inset ring-red-500" : displayedTotal ? "bg-blue-50/60" : "bg-white";
+              const valueColor = status === "over" ? "text-white" : status === "warning" ? "text-amber-800" : isWinner ? "text-red-700" : displayedTotal ? "text-blue-700" : "text-slate-400";
               return <button type="button" key={number} onClick={() => addNumberToInput(number)} title={status === "over" ? "Limit ကျော်နေသည်" : status === "warning" ? "Limit နီးကပ်နေသည်" : undefined} className={`grid min-h-10 grid-cols-[1fr_auto_1fr] items-baseline gap-1 whitespace-nowrap border-b border-r border-slate-200 px-2 py-1.5 text-left transition ${color}`}>
                 <span className={`text-[13px] font-bold leading-none ${valueColor}`}>{number}</span>
                 <span className={status === "over" ? "text-white/70" : "text-slate-400"}>-</span>
-                <span className={`text-right text-[11px] font-semibold leading-none ${valueColor}`}>{numberTotals[number] ? formatMoney(numberTotals[number]) : "0"}</span>
+                <span className={`text-right text-[11px] font-semibold leading-none ${valueColor}`}>{displayedTotal ? formatMoney(displayedTotal) : "0"}</span>
               </button>;
             })}
           </div>
@@ -398,13 +404,13 @@ export default function SalesEntry({
             <div className="rounded-lg bg-blue-50 p-3">
               <p className="text-xs text-blue-700">စာရင်းအရေအတွက်</p>
               <p className="mt-1 text-xl font-bold text-blue-900">
-                {formatMoney(pagination.total)}
+                {formatMoney(pagination.total + (optimisticItems ? 1 : 0))}
               </p>
             </div>
             <div className="rounded-lg bg-emerald-50 p-3">
               <p className="text-xs text-emerald-700">စုစုပေါင်းရောင်းအား</p>
               <p className="mt-1 text-xl font-bold text-emerald-900">
-                {formatMoney(summaryTotal)}
+                {formatMoney(summaryTotal + (optimisticItems || []).reduce((sum, item) => sum + item.amount, 0))}
               </p>
             </div>
           </div>

@@ -99,25 +99,21 @@ function expandedItems(rawInput: string) {
   return parsed.filter((item): item is { numbers: string[]; amount: number; ruleType: string } => Boolean(item)).flatMap((item) => item.numbers.map((number) => ({ number, amount: item.amount, ruleType: item.ruleType })));
 }
 
-async function checkLimits(supabase: Awaited<ReturnType<typeof createClient>>, dealerId: string, commissionId: string, periodId: string, items: { number: string; amount: number }[], totalAmount: number, excludeSaleId?: string) {
+async function checkLimits(supabase: Awaited<ReturnType<typeof createClient>>, dealerId: string, commissionId: string, periodId: string, items: { number: string; amount: number }[], _totalAmount: number, excludeSaleId?: string) {
   const [{ data: overall }, { data: perNumber }, { data: commissionNumbers }] = await Promise.all([
     supabase.from("dealer_limits").select("max_amount, warning_percent").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("limit_type", "all_number").is("number", null).limit(1).maybeSingle(),
     supabase.from("dealer_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("limit_type", "number"),
     supabase.from("commission_number_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId),
   ]);
-  const { data: entries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("status", "active");
-  const entryIds = (entries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
-  const { data: currentItems } = entryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", entryIds) : { data: [] };
-  const { data: commissionEntries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
-  const commissionEntryIds = (commissionEntries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
-  const { data: commissionItems } = commissionEntryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", commissionEntryIds) : { data: [] };
-  for (const number of [...new Set(items.map((item) => item.number))]) {
+  const numbers = [...new Set(items.map((item) => item.number))];
+  const { data: totals } = await supabase.rpc("get_limit_number_totals", { p_dealer_id: dealerId, p_draw_period_id: periodId, p_commission_id: commissionId, p_numbers: numbers, p_exclude_sale_id: excludeSaleId || null });
+  const totalsByNumber = new Map<string, { dealer: number; commission: number }>(((totals || []) as { number: string; dealer_total: number; commission_total: number }[]).map((total) => [total.number, { dealer: Number(total.dealer_total), commission: Number(total.commission_total) }]));
+  for (const number of numbers) {
     const commissionLimit = (commissionNumbers || []).find((limit) => limit.number === number);
     const globalLimit = (perNumber || []).find((limit) => limit.number === number);
     const limit = commissionLimit || globalLimit || overall;
     if (!limit) continue;
-    const scopedItems = commissionLimit ? commissionItems || [] : currentItems || [];
-    const current = scopedItems.filter((item) => item.number === number).reduce((sum, item) => sum + Number(item.amount), 0);
+    const current = commissionLimit ? totalsByNumber.get(number)?.commission || 0 : totalsByNumber.get(number)?.dealer || 0;
     const added = items.filter((item) => item.number === number).reduce((sum, item) => sum + Number(item.amount), 0);
     const next = current + added;
     const max = Number(limit.max_amount);
