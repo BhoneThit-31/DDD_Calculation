@@ -77,3 +77,16 @@ export async function saveSales(_previous: SaveSalesState, formData: FormData): 
   revalidatePath("/");
   return { success: `#${receiptNumber} စာရင်းသိမ်းပြီးပါပြီ။` };
 }
+
+export async function deleteSale(formData: FormData) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const saleId = String(formData.get("sale_id") || "");
+  if (!user || !saleId) return;
+  const { data: sale } = await supabase.from("sales_entries").select("id, dealer_id, status, raw_input, total_amount").eq("id", saleId).maybeSingle();
+  if (!sale || sale.status === "deleted") return;
+  const { error } = await supabase.from("sales_entries").update({ status: "deleted", deleted_at: new Date().toISOString(), deleted_by: user.id, updated_by: user.id }).eq("id", saleId);
+  if (error) return;
+  await supabase.from("audit_logs").insert({ dealer_id: sale.dealer_id, entity_type: "sales_entry", entity_id: sale.id, action: "delete", old_data: sale, new_data: { ...sale, status: "deleted" }, reason: "Sales entry soft deleted", created_by: user.id });
+  revalidatePath("/");
+}
