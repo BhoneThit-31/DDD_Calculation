@@ -30,7 +30,9 @@ function wildcardNumbers(pattern: string) {
 function expandRule(rule: string, amount: number, permutation: boolean) {
   if (rule === "A") return { numbers: Array.from({ length: 10 }, (_, digit) => `${digit}${digit}${digit}`), amount, ruleType: "all_same" };
   if (rule.includes("/")) {
-    const patterns = rule.split(".");
+    const wildcardDigits = rule.replace(/\./g, "");
+    if (wildcardDigits.length % 3 !== 0) return null;
+    const patterns = wildcardDigits.match(/[\d/]{3}/g) || [];
     const numbers = patterns.flatMap((pattern) => wildcardNumbers(pattern) || []);
     if (!numbers.length || patterns.some((pattern) => !wildcardNumbers(pattern))) return null;
     return { numbers, amount, ruleType: "wildcard" };
@@ -65,15 +67,19 @@ function parseRuleLine(line: string) {
     if (match) { rule = match[1]; amount = Number(match[2]); permutation = /[R*]$/.test(rule); if (permutation) rule = rule.slice(0, -1); }
   }
   if (!match && /^\d+$/.test(normalized)) {
-    if (normalized.length >= 9 && (normalized.length - 3) % 3 === 0) {
-      const numberDigits = normalized.slice(0, -3);
-      const compactAmount = Number(normalized.slice(-3));
+    const amountLength = [4, 3, 2, 1].find((length) => normalized.length - length >= 3 && (normalized.length - length) % 3 === 0);
+    if (amountLength) {
+      const numberDigits = normalized.slice(0, -amountLength);
+      const compactAmount = Number(normalized.slice(-amountLength));
       const numbers = numberDigits.match(/\d{3}/g) || [];
-      if (compactAmount > 0 && numbers.length) return { numbers, amount: compactAmount, ruleType: "compact_multi_direct" };
+      if (compactAmount > 0 && numbers.length) return { numbers, amount: compactAmount, ruleType: numbers.length > 1 ? "compact_multi_direct" : "compact_direct" };
     }
-    if (normalized.length >= 4) {
-      const compactAmount = Number(normalized.slice(3));
-      if (compactAmount > 0) return { numbers: [normalized.slice(0, 3)], amount: compactAmount, ruleType: "compact_direct" };
+  }
+  if (!match && /^[\d/]+$/.test(normalized)) {
+    const amountLength = [4, 3, 2, 1].find((length) => normalized.length - length >= 3 && (normalized.length - length) % 3 === 0);
+    if (amountLength) {
+      const compactAmount = Number(normalized.slice(-amountLength));
+      if (compactAmount > 0) return expandRule(normalized.slice(0, -amountLength), compactAmount, false);
     }
   }
   if (!Number.isFinite(amount) || amount <= 0 || !rule) return null;
@@ -81,7 +87,10 @@ function parseRuleLine(line: string) {
 }
 
 function parseLines(rawInput: string) {
-  return rawInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(parseRuleLine);
+  return rawInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
+    const parsedLine = parseRuleLine(line);
+    return parsedLine ? [parsedLine] : line.split(/\s+/).filter(Boolean).map(parseRuleLine);
+  });
 }
 
 function expandedItems(rawInput: string) {

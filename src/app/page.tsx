@@ -24,7 +24,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   ]);
   const openPeriods = (allPeriods || []).filter((period) => period.status === "open");
   const requestedPage = Math.max(1, Number(params.page) || 1);
-  const status = params.status === "deleted" || params.status === "all" ? params.status : "active";
+  const status = params.status === "deleted" || params.status === "active" ? params.status : "all";
   const sort = params.sort === "list" || params.sort === "amount" ? params.sort : "time";
   const ascending = params.dir === "asc";
   const orderColumn = sort === "list" ? "receipt_number" : sort === "amount" ? "total_amount" : "created_at";
@@ -38,8 +38,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
   if (selectedPeriod) query = query.eq("draw_period_id", selectedPeriod);
   if (params.from) query = query.gte("created_at", `${params.from}T00:00:00+06:30`);
   if (params.to) query = query.lte("created_at", `${params.to}T23:59:59+06:30`);
-  let summaryQuery = supabase.from("sales_entries").select("total_amount").eq("dealer_id", dealerId);
-  if (status !== "all") summaryQuery = summaryQuery.eq("status", status);
+  let summaryQuery = supabase.from("sales_entries").select("total_amount").eq("dealer_id", dealerId).eq("status", "active");
   if (params.search?.trim()) { const listNumber = Number(params.search.trim()); summaryQuery = /^\d+$/.test(params.search.trim()) ? summaryQuery.eq("receipt_number", listNumber) : summaryQuery.eq("receipt_number", -1); }
   if (selectedCommission) summaryQuery = summaryQuery.eq("commission_id", selectedCommission);
   if (selectedPeriod) summaryQuery = summaryQuery.eq("draw_period_id", selectedPeriod);

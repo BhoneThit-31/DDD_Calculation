@@ -16,6 +16,7 @@ type Sale = {
   raw_input: string;
   total_amount: number;
   created_at: string;
+  status: string;
   items: SaleItem[];
 };
 type FilterValues = {
@@ -255,12 +256,12 @@ export default function SalesEntry({
                   const expanded = expandedSales.has(sale.id);
                   return (
                     <Fragment key={sale.id}>
-                      <tr className="border-b border-slate-100">
+                <tr className={`border-b border-slate-100 ${sale.status === "deleted" ? "bg-rose-50/70 text-slate-500" : ""}`}>
                         <td className="px-3 py-3 text-slate-500">
                           {sale.receipt_number}
                         </td>
-                        <td className="max-w-[260px] truncate px-3 py-3">
-                          {sale.raw_input}
+                  <td className="max-w-[260px] truncate px-3 py-3">
+                    {sale.raw_input}{sale.status === "deleted" && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">ဖျက်ထားသည်</span>}
                         </td>
                         <td className="px-3 py-3 text-right font-semibold">
                           {formatMoney(Number(sale.total_amount))}
@@ -288,22 +289,21 @@ export default function SalesEntry({
                           </button>
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <div className="flex justify-center gap-1">
-                            <button
+                    {sale.status === "deleted" ? <span className="text-xs font-medium text-rose-600">soft delete</span> : <div className="flex justify-center gap-1"><button
                               type="button"
                               onClick={() => setEditingSale(sale)}
                               className="rounded-md border border-blue-200 px-2 py-1 text-xs text-blue-700 hover:bg-blue-50"
                             >
                               ပြင်
                             </button>
-                            <button
+                      <button
                               type="button"
                               onClick={() => setDeleteTarget(sale)}
                               className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                             >
                               ဖျက်
-                            </button>
-                          </div>
+                      </button>
+                    </div>}
                         </td>
                       </tr>
                       {expanded && (
