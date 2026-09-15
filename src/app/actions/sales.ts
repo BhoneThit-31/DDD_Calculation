@@ -22,24 +22,62 @@ function uniquePermutations(value: string) {
   return [...result];
 }
 
-function parseRuleLine(line: string) {
-  const normalized = toEnglishDigits(line).replace(/,/g, "").replace(/\s+/g, "").toUpperCase();
-  const amountMatch = normalized.match(/(\d+(?:\.\d+)?)$/);
-  if (!amountMatch) return null;
-  const amount = Number(amountMatch[1]);
-  const rule = normalized.slice(0, -amountMatch[1].length);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+function wildcardNumbers(pattern: string) {
+  if (!/^[\d/]{3}$/.test(pattern)) return null;
+  return [...pattern].reduce<string[]>((numbers, character) => character === "/" ? numbers.flatMap((number) => ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => number + digit)) : numbers.map((number) => number + character), [""]);
+}
 
-  if (/^A$/.test(rule)) {
-    return { numbers: Array.from({ length: 10 }, (_, digit) => `${digit}${digit}${digit}`), amount, ruleType: "all_same" };
+function expandRule(rule: string, amount: number, permutation: boolean) {
+  if (rule === "A") return { numbers: Array.from({ length: 10 }, (_, digit) => `${digit}${digit}${digit}`), amount, ruleType: "all_same" };
+  if (rule.includes("/")) {
+    const patterns = rule.split(".");
+    const numbers = patterns.flatMap((pattern) => wildcardNumbers(pattern) || []);
+    if (!numbers.length || patterns.some((pattern) => !wildcardNumbers(pattern))) return null;
+    return { numbers, amount, ruleType: "wildcard" };
   }
-  if (/^\d{1,3}R$/.test(rule)) {
-    return { numbers: uniquePermutations(rule.slice(0, -1)).map((number) => number.padStart(3, "0")), amount, ruleType: "permutation" };
+  if (permutation) {
+    const digits = rule.replace(/\./g, "");
+    if (!/^\d+$/.test(digits) || digits.length % 3 !== 0) return null;
+    const groups = digits.match(/\d{1,3}/g) || [];
+    return { numbers: groups.flatMap((group) => uniquePermutations(group.padStart(3, "0"))), amount, ruleType: groups.length > 1 ? "multi_permutation" : "permutation" };
   }
-  if (/^\d{1,3}$/.test(rule)) {
-    return { numbers: [rule.padStart(3, "0")], amount, ruleType: "direct" };
-  }
+  if (/^\d{1,3}$/.test(rule)) return { numbers: [rule.padStart(3, "0")], amount, ruleType: "direct" };
   return null;
+}
+
+function parseRuleLine(line: string) {
+  const normalized = toEnglishDigits(line).replace(/,/g, "").trim().toUpperCase();
+  let match = normalized.match(/^(.+?)-(\d+(?:\.\d+)?)$/);
+  let rule = match?.[1]?.replace(/\s+/g, "") || "";
+  let amount = match ? Number(match[2]) : NaN;
+  let permutation = false;
+
+  if (!match) {
+    match = normalized.match(/^(.+?)[R*]\s*(\d+(?:\.\d+)?)$/);
+    if (match) { rule = match[1].replace(/\s+/g, ""); amount = Number(match[2]); permutation = true; }
+  }
+  if (!match) {
+    match = normalized.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/);
+    if (match) { rule = match[1].replace(/\s+/g, ""); amount = Number(match[2]); permutation = /[R*]$/.test(rule); if (permutation) rule = rule.slice(0, -1); }
+  }
+  if (!match) {
+    match = normalized.match(/^(A|\d{1,3}[R*])(\d+(?:\.\d+)?)$/);
+    if (match) { rule = match[1]; amount = Number(match[2]); permutation = /[R*]$/.test(rule); if (permutation) rule = rule.slice(0, -1); }
+  }
+  if (!match && /^\d+$/.test(normalized)) {
+    if (normalized.length >= 9 && (normalized.length - 3) % 3 === 0) {
+      const numberDigits = normalized.slice(0, -3);
+      const compactAmount = Number(normalized.slice(-3));
+      const numbers = numberDigits.match(/\d{3}/g) || [];
+      if (compactAmount > 0 && numbers.length) return { numbers, amount: compactAmount, ruleType: "compact_multi_direct" };
+    }
+    if (normalized.length >= 4) {
+      const compactAmount = Number(normalized.slice(3));
+      if (compactAmount > 0) return { numbers: [normalized.slice(0, 3)], amount: compactAmount, ruleType: "compact_direct" };
+    }
+  }
+  if (!Number.isFinite(amount) || amount <= 0 || !rule) return null;
+  return expandRule(rule, amount, permutation);
 }
 
 function parseLines(rawInput: string) {
@@ -58,27 +96,24 @@ async function checkLimits(supabase: Awaited<ReturnType<typeof createClient>>, d
     supabase.from("dealer_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("limit_type", "number"),
     supabase.from("commission_number_limits").select("number, max_amount, warning_percent").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId),
   ]);
-  if (overall) {
-    let query = supabase.from("sales_entries").select("total_amount").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
-    if (excludeSaleId) query = query.neq("id", excludeSaleId);
-    const { data } = await query;
-    const current = (data || []).reduce((sum, row) => sum + Number(row.total_amount), 0);
-    if (current + totalAmount > Number(overall.max_amount)) return `စုစုပေါင်း limit ${Number(overall.max_amount).toLocaleString()} ကျော်သွားပါမယ်။`;
-  }
-  const limitedNumbers = [...(perNumber || []), ...(commissionNumbers || []).map((limit) => ({ ...limit, commissionSpecific: true }))].filter((limit) => items.some((item) => item.number === limit.number));
-  if (limitedNumbers.length) {
-    const { data: entries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("status", "active");
-    const entryIds = (entries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
-    const { data: currentItems } = entryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", entryIds) : { data: [] };
-    const { data: commissionEntries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
-    const commissionEntryIds = (commissionEntries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
-    const { data: commissionItems } = commissionEntryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", commissionEntryIds) : { data: [] };
-    for (const limit of limitedNumbers) {
-      const scopedItems = (limit as { commissionSpecific?: boolean }).commissionSpecific ? (commissionItems || []).filter((item) => item.number === limit.number) : (currentItems || []).filter((item) => item.number === limit.number);
-      const current = scopedItems.reduce((sum, item) => sum + Number(item.amount), 0);
-      const added = items.filter((item) => item.number === limit.number).reduce((sum, item) => sum + Number(item.amount), 0);
-      if (current + added > Number(limit.max_amount)) return `${limit.number} limit ${Number(limit.max_amount).toLocaleString()} ကျော်သွားပါမယ်။`;
-    }
+  const { data: entries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("draw_period_id", periodId).eq("status", "active");
+  const entryIds = (entries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
+  const { data: currentItems } = entryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", entryIds) : { data: [] };
+  const { data: commissionEntries } = await supabase.from("sales_entries").select("id").eq("dealer_id", dealerId).eq("commission_id", commissionId).eq("draw_period_id", periodId).eq("status", "active");
+  const commissionEntryIds = (commissionEntries || []).map((entry) => entry.id).filter((id) => id !== excludeSaleId);
+  const { data: commissionItems } = commissionEntryIds.length ? await supabase.from("sales_items").select("number, amount").in("sales_entry_id", commissionEntryIds) : { data: [] };
+  for (const number of [...new Set(items.map((item) => item.number))]) {
+    const commissionLimit = (commissionNumbers || []).find((limit) => limit.number === number);
+    const globalLimit = (perNumber || []).find((limit) => limit.number === number);
+    const limit = commissionLimit || globalLimit || overall;
+    if (!limit) continue;
+    const scopedItems = commissionLimit ? commissionItems || [] : currentItems || [];
+    const current = scopedItems.filter((item) => item.number === number).reduce((sum, item) => sum + Number(item.amount), 0);
+    const added = items.filter((item) => item.number === number).reduce((sum, item) => sum + Number(item.amount), 0);
+    const next = current + added;
+    const max = Number(limit.max_amount);
+    if (next > max) return `${number} limit ${max.toLocaleString()} ကျော်သွားပါမယ်။`;
+    if (next >= max * Number(limit.warning_percent) / 100) return `${number} limit သတိပေးအဆင့် ရောက်နေပါပြီ။`;
   }
   return null;
 }
@@ -92,7 +127,7 @@ export async function saveSales(_previous: SaveSalesState, formData: FormData): 
   const rawInput = String(formData.get("raw_input") || "").trim();
   if (!commissionId || !drawPeriodId || !rawInput) return { error: "ကော်မရှင်၊ အကြိမ်နဲ့ အရောင်းစာရင်း ဖြည့်ပါ။" };
   const items = expandedItems(rawInput);
-  if (!items) return { error: "တစ်ကြောင်းစီ `ဂဏန်း ပမာဏ` ပုံစံရေးပါ။ ဥပမာ - 123 100" };
+  if (!items) return { error: "`123R100` သို့မဟုတ် `123.654R100` ပုံစံဖြင့် ရေးပါ။" };
 
   const { data: ownedDealer } = await supabase.from("dealers").select("id").eq("owner_user_id", user.id).eq("status", "active").limit(1).maybeSingle();
   let dealerId = ownedDealer?.id;
@@ -124,7 +159,7 @@ export async function updateSale(_previous: SaveSalesState, formData: FormData):
   if (!user || !saleId) return { error: "စာရင်းမတွေ့ပါ။" };
   if (!reason) return { error: "ပြင်ဆင်ရတဲ့အကြောင်းပြချက် ထည့်ပါ။" };
   const items = expandedItems(rawInput);
-  if (!items) return { error: "တစ်ကြောင်းစီ `ဂဏန်း ပမာဏ` ပုံစံရေးပါ။" };
+  if (!items) return { error: "`123R100` သို့မဟုတ် `123.654R100` ပုံစံဖြင့် ရေးပါ။" };
   const { data: oldSale } = await supabase.from("sales_entries").select("id, dealer_id, commission_id, draw_period_id, raw_input, total_amount, status").eq("id", saleId).maybeSingle();
   if (!oldSale || oldSale.status === "deleted") return { error: "ဒီစာရင်းကို ပြင်လို့မရပါ။" };
   const { data: oldItems } = await supabase.from("sales_items").select("number, rule_type, amount, source_text").eq("sales_entry_id", saleId);
